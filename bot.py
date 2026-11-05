@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import time
-import os                          # <--- ДОБАВИТЬ
-from dotenv import load_dotenv     # <--- ДОБАВИТЬ
+import os
+import datetime
+from dotenv import load_dotenv
+import aiosqlite  # <--- Новая библиотека для БД
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -15,20 +17,56 @@ from aiogram.types import (
 )
 
 # Загружаем переменные из файла .env
-load_dotenv()                      # <--- ДОБАВИТЬ
+load_dotenv()
 
 # === НАСТРОЙКИ ===
-BOT_TOKEN = os.getenv("BOT_TOKEN") # <--- ИЗМЕНИТЬ
-ADMIN_ID = int(os.getenv("ADMIN_ID")) # <--- ИЗМЕНИТЬ (обязательно int!)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 SPAM_DELAY = 60
+DB_NAME = "leads.db" # Имя файла базы данных
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Хранилище для антиспама
 last_request_time: dict[int, float] = {}
+
+
+# === РАБОТА С БАЗОЙ ДАННЫХ ===
+async def init_db():
+    """Создает таблицу, если её еще нет"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                name TEXT,
+                contact TEXT,
+                username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+async def save_lead(user_id: int, name: str, contact: str, username: str):
+    """Сохраняет новую заявку в базу"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO leads (user_id, name, contact, username) VALUES (?, ?, ?, ?)",
+            (user_id, name, contact, username)
+        )
+        await db.commit()
+
+async def get_last_leads(limit: int = 10):
+    """Достает последние N заявок"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row 
+        async with db.execute(
+            "SELECT name, contact, username, created_at FROM leads ORDER BY id DESC LIMIT ?", 
+            (limit,)
+        ) as cursor:
+            return await cursor.fetchall()
 
 
 # === СОСТОЯНИЯ ===
@@ -50,20 +88,18 @@ def get_phone_keyboard():
 
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
+        keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
         resize_keyboard=True,
-        is_persistent=True  # Эта настройка не дает кнопке скрыться
+        is_persistent=True
     )
 
 
+# === СТАРТ ===
 @dp.message(Command("start"))
 @dp.message(F.text == "🏠 Главное меню")
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     
-    # Кнопки под сообщением
     inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Прайс-лист", callback_data="price")],
         [InlineKeyboardButton(text="✍️ Оставить заявку", callback_data="request")],
@@ -74,11 +110,34 @@ async def cmd_start(message: Message, state: FSMContext):
         "Я — демо-бот.",
         reply_markup=get_main_menu_keyboard()
     )
+    await message.answer("Выберите действие:", reply_markup=inline_keyboard)
+
+
+# === КОМАНДА ДЛЯ АДМИНА: /leads ===
+@dp.message(Command("leads"))
+async def show_leads(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("У вас нет прав для этой команды.")
+        return
+        
+    leads = await get_last_leads(limit=10)
     
-    await message.answer(
-        "Выберите действие:",
-        reply_markup=inline_keyboard
-    )
+    if not leads:
+        await message.answer("База данных пуста. Заявок пока нет.")
+        return
+        
+    text = "📊 <b>Последние 10 заявок:</b>\n\n"
+    for i, lead in enumerate(leads, 1):
+        date_str = lead['created_at'].split('.')[0] if '.' in lead['created_at'] else lead['created_at']
+        text += (
+            f"{i}. 👤 <b>{lead['name']}</b>\n"
+            f"📞 {lead['contact']}\n"
+            f"💬 @{lead['username']}\n"
+            f"🕒 {date_str}\n\n"
+        )
+    
+    await message.answer(text, parse_mode="HTML")
+
 
 # === ПРАЙС ===
 @dp.callback_query(F.data == "price")
@@ -139,7 +198,7 @@ async def cancel_form(message: Message, state: FSMContext):
     )
 
 
-# === ШАГ 2: ТЕЛЕФОН (КНОПКА ИЛИ ТЕКСТ) ===
+# === ШАГ 2: ТЕЛЕФОН + СОХРАНЕНИЕ В БД ===
 @dp.message(LeadForm.waiting_phone, F.contact | F.text)
 async def process_phone(message: Message, state: FSMContext):
     if message.contact:
@@ -153,12 +212,17 @@ async def process_phone(message: Message, state: FSMContext):
     data = await state.get_data()
     name = data.get("name", "—")
     username = message.from_user.username or "нет"
+    user_id = message.from_user.id
 
+    # 1. СОХРАНЯЕМ В БАЗУ ДАННЫХ
+    await save_lead(user_id, name, contact, username)
+
+    # 2. ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ АДМИНУ
     lead_text = (
         "🔔 <b>Новая заявка!</b>\n\n"
         f"👤 Имя: {name}\n"
         f"📞 Контакт: {contact}\n"
-        f"💬 Telegram: @{username} (id: {message.from_user.id})"
+        f"💬 Telegram: @{username} (id: {user_id})"
     )
 
     try:
@@ -168,14 +232,14 @@ async def process_phone(message: Message, state: FSMContext):
         logging.error(f"Не удалось отправить заявку: {e}")
 
     await message.answer(
-        f"Спасибо, {name}! Заявка принята. 🙌\n"
+        f"Спасибо, {name}! Заявка принята и сохранена. 🙌\n"
         "Я свяжусь с вами в ближайшее время.",
         reply_markup=get_main_menu_keyboard()
     )
     await state.clear()
 
 
-# === ЗАГЛУШКА ДЛЯ НЕИЗВЕСТНЫХ ТЕКСТОВ ===
+# === ЗАГЛУШКА ===
 @dp.message(F.text)
 async def fallback(message: Message):
     await message.answer(
@@ -186,6 +250,8 @@ async def fallback(message: Message):
 
 # === ЗАПУСК ===
 async def main():
+    await init_db() # Инициализируем базу данных
+    print("База данных готова.")
     print("Бот запущен. Нажмите Ctrl+C для остановки.")
     await dp.start_polling(bot)
 
