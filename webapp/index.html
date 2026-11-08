@@ -86,17 +86,17 @@
                 return;
             }
 
-            // Формируем данные для отправки в бота
             const data = {
                 name: name,
                 phone: phone
             };
 
-            // Отправляем данные в Telegram (бот получит их)
             tg.sendData(JSON.stringify(data));
             
-            // Закрываем окно после отправки
-            tg.close();
+            // Небольшая задержка, чтобы Telegram успел передать данные
+            setTimeout(() => {
+                tg.close();
+            }, 300); 
         }
     </script>
 </body>
