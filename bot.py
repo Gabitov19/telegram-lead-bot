@@ -179,20 +179,32 @@ async def back_to_main(callback: CallbackQuery):
     await callback.answer()
 
 
-# === ОБРАБОТКА WEB APP ===
+# === ОБРАБОТКА ДАННЫХ ИЗ WEB APP ===
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
-    print("!!! ПОЛУЧЕНЫ ДАННЫЕ ИЗ WEB APP !!!") # <--- ДОБАВИТЬ
-    print(message.web_app_data.data)            # <--- ДОБАВИТЬ
     try:
         data = json.loads(message.web_app_data.data)
         name = data.get("name")
         contact = data.get("phone")
+        service = data.get("service", "Не указана")
+        date = data.get("date", "Не указана")
+        time = data.get("time", "Не указано")
         username = message.from_user.username or "нет"
         
+        # Сохраняем в БД (пока без новых полей, чтобы не усложнять структуру таблицы, 
+        # но в будущем можно добавить колонки service, date, time)
         await save_lead(message.from_user.id, name, contact, username)
         
-        lead_text = f"🔔 <b>Новая заявка (Web App)!</b>\n\n👤 Имя: {name}\n📞 Контакт: {contact}\n💬 Telegram: @{username}"
+        # Красиво форматируем уведомление для админа
+        lead_text = (
+            f"🔔 <b>Новая запись!</b>\n\n"
+            f"👤 Имя: {name}\n"
+            f"📞 Контакт: {contact}\n"
+            f"🛠 Услуга: {service}\n"
+            f"📅 Дата: {date} в {time}\n"
+            f"💬 Telegram: @{username}"
+        )
+        
         managers = await get_managers()
         recipients = set(managers)
         recipients.add(ADMIN_ID)
@@ -203,7 +215,7 @@ async def handle_webapp_data(message: Message):
             except Exception:
                 pass
                 
-        await message.answer(f"Спасибо, {name}! Ваша заявка из Web App успешно получена. 🙌", reply_markup=get_main_menu_keyboard())
+        await message.answer(f"Спасибо, {name}! Вы записаны на {date} в {time}. 🙌", reply_markup=get_main_menu_keyboard())
     except Exception as e:
         logging.error(f"Ошибка Web App: {e}")
         await message.answer("Произошла ошибка при обработке данных.")
