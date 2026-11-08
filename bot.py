@@ -27,7 +27,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 SPAM_DELAY = 60
 DB_NAME = "leads.db"
 MANAGER_USERNAME = "gabitov19" 
-WEBAPP_URL = "https://gabitov19.github.io/telegram-lead-bot/webapp/?v=2" # <--- ВАША ССЫЛКА
+WEBAPP_URL = "https://gabitov19.github.io/telegram-lead-bot/webapp/" # Если меняли, верните свою ссылку
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -39,42 +39,65 @@ last_request_time: dict[int, float] = {}
 # === БАЗА ДАННЫХ ===
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
+        # Создаем таблицу, если её нет (для новых колонок)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS leads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, contact TEXT, username TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                user_id INTEGER, 
+                name TEXT, 
+                contact TEXT, 
+                username TEXT, 
+                service TEXT,
+                appointment_date TEXT,
+                appointment_time TEXT,
+                created_at TEXT
             )
         """)
+        # Миграция для тех, у кого база создалась раньше (добавляем новые колонки)
+        try:
+            await db.execute("ALTER TABLE leads ADD COLUMN service TEXT")
+            await db.execute("ALTER TABLE leads ADD COLUMN appointment_date TEXT")
+            await db.execute("ALTER TABLE leads ADD COLUMN appointment_time TEXT")
+        except Exception:
+            pass # Колонки уже существуют, игнорируем ошибку
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, joined_at TEXT
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS managers (
-                user_id INTEGER PRIMARY KEY, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                user_id INTEGER PRIMARY KEY, added_at TEXT
             )
         """)
         await db.commit()
 
 async def save_user(user_id: int, username: str, first_name: str):
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)", (user_id, username, first_name))
+        await db.execute("INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?, ?, ?, ?)", (user_id, username, first_name, now))
         await db.commit()
 
-async def save_lead(user_id: int, name: str, contact: str, username: str):
+async def save_lead(user_id: int, name: str, contact: str, username: str, service: str = "—", app_date: str = "—", app_time: str = "—"):
+    # Фиксируем локальное время создания заявки
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO leads (user_id, name, contact, username) VALUES (?, ?, ?, ?)", (user_id, name, contact, username))
+        await db.execute(
+            "INSERT INTO leads (user_id, name, contact, username, service, appointment_date, appointment_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+            (user_id, name, contact, username, service, app_date, app_time, now)
+        )
         await db.commit()
 
 async def get_last_leads(limit: int = 10):
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row 
-        async with db.execute("SELECT name, contact, username, created_at FROM leads ORDER BY id DESC LIMIT ?", (limit,)) as cursor:
+        async with db.execute("SELECT name, contact, username, service, appointment_date, appointment_time, created_at FROM leads ORDER BY id DESC LIMIT ?", (limit,)) as cursor:
             return await cursor.fetchall()
 
 async def get_all_leads_for_excel():
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT id, name, contact, username, created_at FROM leads ORDER BY id ASC") as cursor:
+        async with db.execute("SELECT id, name, contact, username, service, appointment_date, appointment_time, created_at FROM leads ORDER BY id ASC") as cursor:
             return await cursor.fetchall()
 
 async def get_stats():
@@ -94,8 +117,9 @@ async def get_all_user_ids():
             return [row[0] for row in await cursor.fetchall()]
 
 async def add_manager(user_id: int):
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT OR IGNORE INTO managers (user_id) VALUES (?)", (user_id,))
+        await db.execute("INSERT OR IGNORE INTO managers (user_id, added_at) VALUES (?, ?)", (user_id, now))
         await db.commit()
 
 async def remove_manager(user_id: int):
@@ -179,7 +203,7 @@ async def back_to_main(callback: CallbackQuery):
     await callback.answer()
 
 
-# === ОБРАБОТКА ДАННЫХ ИЗ WEB APP ===
+# === ОБРАБОТКА WEB APP ===
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
     try:
@@ -191,11 +215,10 @@ async def handle_webapp_data(message: Message):
         time = data.get("time", "Не указано")
         username = message.from_user.username or "нет"
         
-        # Сохраняем в БД (пока без новых полей, чтобы не усложнять структуру таблицы, 
-        # но в будущем можно добавить колонки service, date, time)
-        await save_lead(message.from_user.id, name, contact, username)
+        # Сохраняем с новыми полями
+        await save_lead(message.from_user.id, name, contact, username, service, date, time)
         
-        # Красиво форматируем уведомление для админа
+        # Красиво форматируем уведомление
         lead_text = (
             f"🔔 <b>Новая запись!</b>\n\n"
             f"👤 Имя: {name}\n"
@@ -236,7 +259,7 @@ async def btn_stats(callback: CallbackQuery):
     try:
         await callback.message.edit_text(text, reply_markup=get_admin_panel(), parse_mode="HTML")
     except Exception:
-        pass # Игнорируем ошибку, если текст не изменился
+        pass
     await callback.answer()
 
 @dp.callback_query(F.data == "admin_broadcast")
@@ -354,6 +377,7 @@ async def process_phone(message: Message, state: FSMContext):
     name = data.get("name", "—")
     username = message.from_user.username or "нет"
     
+    # Передаем пустые значения для новых полей, так как это старая форма
     await save_lead(message.from_user.id, name, contact, username)
     
     lead_text = f"🔔 <b>Новая заявка!</b>\n\n👤 Имя: {name}\n📞 Контакт: {contact}\n💬 Telegram: @{username}"
@@ -406,8 +430,14 @@ async def show_leads(message: Message):
         return
     text = "📊 <b>Последние 10 заявок:</b>\n\n"
     for i, lead in enumerate(leads, 1):
-        date_str = lead['created_at'].split('.')[0] if '.' in lead['created_at'] else lead['created_at']
-        text += f"{i}. 👤 <b>{lead['name']}</b>\n📞 {lead['contact']}\n🕒 {date_str}\n\n"
+        # Красиво выводим всё новые данные
+        text += (
+            f"{i}. 👤 <b>{lead['name']}</b>\n"
+            f"📞 {lead['contact']}\n"
+            f"🛠 {lead['service']}\n"
+            f"📅 Запись: {lead['appointment_date']} в {lead['appointment_time']}\n"
+            f"🕒 Создана: {lead['created_at']}\n\n"
+        )
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("export"))
@@ -419,7 +449,7 @@ async def export_to_excel(message: Message):
         return
     wb = Workbook()
     ws = wb.active
-    ws.append(["ID", "Имя", "Контакт", "Telegram", "Дата"])
+    ws.append(["ID", "Имя", "Контакт", "Telegram", "Услуга", "Дата записи", "Время записи", "Время создания"])
     for lead in leads: ws.append(list(lead))
     for cell in ws[1]: cell.font = cell.font.copy(bold=True)
     filename = "leads_export.xlsx"
