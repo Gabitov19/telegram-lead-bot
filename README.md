@@ -1,5 +1,7 @@
 # 🤖 Telegram-бот для бизнеса с Web App (Lead Bot + Mini-CRM)
 
+👉 **[Попробовать Web App в действии](https://gabitov19.github.io/telegram-lead-bot/webapp/)**
+
 Многофункциональный Telegram-бот, который автоматизирует сбор заявок и онлайн-запись клиентов. Включает в себя современное веб-приложение (Mini App) с календарем и выбором услуг, базу данных и мощную админ-панель.
 
 Идеальное решение для малого и среднего бизнеса (салоны красоты, клиники, онлайн-школы, услуги, инфобизнес).
@@ -42,5 +44,7 @@
    ```bash
    git clone https://github.com/Gabitov19/telegram-lead-bot.git
    cd telegram-lead-bot
+
+👉 **[Попробовать Web App в действии](https://gabitov19.github.io/telegram-lead-bot/webapp/)**
 
 Разработано: Gabitov19
