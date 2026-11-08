@@ -25,7 +25,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 SPAM_DELAY = 60
 DB_NAME = "leads.db"
-MANAGER_USERNAME = "gabitov19" # <--- ЗАМЕНИТЕ НА ВАШ ЮЗЕРНЕЙМ (без @)
+MANAGER_USERNAME = "gabitov19" 
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -37,39 +37,31 @@ last_request_time: dict[int, float] = {}
 # === БАЗА ДАННЫХ ===
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
-        # Таблица заявок
         await db.execute("""
             CREATE TABLE IF NOT EXISTS leads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER, name TEXT, contact TEXT, username TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, contact TEXT, username TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Таблица пользователей (для рассылки)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS managers (
+                user_id INTEGER PRIMARY KEY, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         await db.commit()
 
 async def save_user(user_id: int, username: str, first_name: str):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
-            (user_id, username, first_name)
-        )
+        await db.execute("INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)", (user_id, username, first_name))
         await db.commit()
 
 async def save_lead(user_id: int, name: str, contact: str, username: str):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT INTO leads (user_id, name, contact, username) VALUES (?, ?, ?, ?)",
-            (user_id, name, contact, username)
-        )
+        await db.execute("INSERT INTO leads (user_id, name, contact, username) VALUES (?, ?, ?, ?)", (user_id, name, contact, username))
         await db.commit()
 
 async def get_last_leads(limit: int = 10):
@@ -89,7 +81,6 @@ async def get_stats():
             users_count = (await cursor.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM leads") as cursor:
             leads_count = (await cursor.fetchone())[0]
-        # Заявки за сегодня
         today = datetime.date.today().isoformat()
         async with db.execute("SELECT COUNT(*) FROM leads WHERE date(created_at) = ?", (today,)) as cursor:
             today_leads = (await cursor.fetchone())[0]
@@ -98,8 +89,22 @@ async def get_stats():
 async def get_all_user_ids():
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT user_id FROM users") as cursor:
-            rows = await cursor.fetchall()
-            return [row[0] for row in rows]
+            return [row[0] for row in await cursor.fetchall()]
+
+async def add_manager(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT OR IGNORE INTO managers (user_id) VALUES (?)", (user_id,))
+        await db.commit()
+
+async def remove_manager(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM managers WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+async def get_managers() -> list[int]:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT user_id FROM managers") as cursor:
+            return [row[0] for row in await cursor.fetchall()]
 
 
 # === СОСТОЯНИЯ ===
@@ -108,6 +113,7 @@ class Form(StatesGroup):
     waiting_phone = State()
     waiting_feedback = State()
     waiting_broadcast = State()
+    waiting_manager_id = State()  # Ждем ID нового менеджера
 
 
 # === КЛАВИАТУРЫ ===
@@ -123,13 +129,37 @@ def get_main_menu_keyboard():
         resize_keyboard=True, is_persistent=True
     )
 
-def get_inline_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def get_inline_menu(user_id: int):
+    """Главное меню. Кнопка админки показывается только админу"""
+    keyboard = [
         [InlineKeyboardButton(text="📋 Прайс-лист", callback_data="price")],
         [InlineKeyboardButton(text="✍️ Оставить заявку", callback_data="request")],
         [InlineKeyboardButton(text="❓ FAQ", callback_data="faq"), InlineKeyboardButton(text="💬 Менеджер", callback_data="contact")],
         [InlineKeyboardButton(text="📝 Оставить отзыв", callback_data="feedback")]
+    ]
+    if user_id == ADMIN_ID:
+        keyboard.append([InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_admin_panel():
+    """Меню админ-панели"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Управление менеджерами", callback_data="manage_managers")],
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_main")]
     ])
+
+def get_managers_menu(managers: list):
+    """Меню со списком менеджеров для удаления"""
+    keyboard = [[InlineKeyboardButton(text="➕ Добавить менеджера", callback_data="add_mgr")]]
+    
+    # Добавляем кнопки с ID менеджеров для удаления
+    for mgr in managers:
+        keyboard.append([InlineKeyboardButton(text=f"❌ Удалить ID: {mgr}", callback_data=f"del_mgr:{mgr}")])
+        
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 # === СТАРТ ===
@@ -143,7 +173,100 @@ async def cmd_start(message: Message, state: FSMContext):
         f"Привет, {message.from_user.first_name}! 👋\nЯ — демо-бот.",
         reply_markup=get_main_menu_keyboard()
     )
-    await message.answer("Выберите действие:", reply_markup=get_inline_menu())
+    await message.answer("Выберите действие:", reply_markup=get_inline_menu(message.from_user.id))
+
+@dp.callback_query(F.data == "back_to_main")
+async def back_to_main(callback: CallbackQuery):
+    await callback.message.edit_text("Выберите действие:", reply_markup=get_inline_menu(callback.from_user.id))
+    await callback.answer()
+
+
+# === АДМИН-ПАНЕЛЬ (КНОПКИ) ===
+@dp.callback_query(F.data == "admin_panel")
+async def show_admin_panel(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Доступ запрещен.", show_alert=True)
+        return
+    await callback.message.edit_text("👑 <b>Админ-панель</b>\nВыберите раздел:", reply_markup=get_admin_panel(), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_stats")
+async def btn_stats(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    users, leads, today = await get_stats()
+    text = f"📊 <b>Статистика бота:</b>\n\n👥 Пользователей: {users}\n📝 Всего заявок: {leads}\n🔥 Заявок за сегодня: {today}"
+    await callback.message.edit_text(text, reply_markup=get_admin_panel(), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def btn_broadcast(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID: return
+    await state.set_state(Form.waiting_broadcast)
+    await callback.message.answer("📢 Отправьте сообщение для рассылки (можно с фото):")
+    await callback.answer()
+
+# === УПРАВЛЕНИЕ МЕНЕДЖЕРАМИ ЧЕРЕЗ КНОПКИ ===
+@dp.callback_query(F.data == "manage_managers")
+async def btn_manage_managers(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    managers = await get_managers()
+    text = "👥 <b>Управление менеджерами</b>\n\n"
+    if managers:
+        text += "Текущие менеджеры (нажмите ❌, чтобы удалить):"
+    else:
+        text += "В команде пока нет менеджеров."
+    
+    await callback.message.edit_text(text, reply_markup=get_managers_menu(managers), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "add_mgr")
+async def btn_add_mgr(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID: return
+    await state.set_state(Form.waiting_manager_id)
+    await callback.message.edit_text(
+        "Отправьте <b>ID</b> пользователя, которого хотите сделать менеджером.\n\n"
+        "💡 <i>Попросите его нажать /start у бота, а затем узнать ID через @userinfobot.</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.message(Form.waiting_manager_id, F.text)
+async def process_add_manager(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        new_id = int(message.text.strip())
+        await add_manager(new_id)
+        
+        # Проверяем, есть ли этот пользователь в базе (нажимал ли он /start)
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (new_id,)) as cursor:
+                user_exists = await cursor.fetchone()
+        
+        if not user_exists:
+            await message.answer(f"⚠️ Менеджер <code>{new_id}</code> добавлен, но он еще не нажимал /start у бота. Уведомления не будут приходить, пока он не сделает это.", parse_mode="HTML")
+        else:
+            await message.answer(f"✅ Менеджер <code>{new_id}</code> успешно добавлен.", parse_mode="HTML")
+        
+        await state.clear()
+        managers = await get_managers()
+        await message.answer("👥 <b>Управление менеджерами</b>", reply_markup=get_managers_menu(managers), parse_mode="HTML")
+        
+    except ValueError:
+        await message.answer("❌ Ошибка: ID должен состоять только из цифр. Попробуйте снова.")
+
+@dp.callback_query(F.data.startswith("del_mgr:"))
+async def btn_del_mgr(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    mgr_id = int(callback.data.split(":")[1])
+    await remove_manager(mgr_id)
+    
+    managers = await get_managers()
+    await callback.message.edit_text(
+        f"✅ Менеджер <code>{mgr_id}</code> удален.\n\n👥 <b>Управление менеджерами</b>", 
+        reply_markup=get_managers_menu(managers), 
+        parse_mode="HTML"
+    )
+    await callback.answer("Удалено")
 
 
 # === FAQ И МЕНЕДЖЕР ===
@@ -155,11 +278,8 @@ async def show_faq(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "contact")
 async def show_contact(callback: CallbackQuery):
-    text = f"💬 <b>Связь с менеджером</b>\n\nНажмите на кнопку ниже, чтобы написать нам напрямую."
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")]
-    ])
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")]])
+    await callback.message.answer(f"💬 <b>Связь с менеджером</b>\n\nНажмите на кнопку ниже.", reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
 
@@ -228,10 +348,15 @@ async def process_phone(message: Message, state: FSMContext):
     await save_lead(message.from_user.id, name, contact, username)
     
     lead_text = f"🔔 <b>Новая заявка!</b>\n\n👤 Имя: {name}\n📞 Контакт: {contact}\n💬 Telegram: @{username}"
-    try:
-        await bot.send_message(ADMIN_ID, lead_text, parse_mode="HTML")
-    except Exception:
-        pass
+    managers = await get_managers()
+    recipients = set(managers)
+    recipients.add(ADMIN_ID)
+
+    for recipient_id in recipients:
+        try:
+            await bot.send_message(recipient_id, lead_text, parse_mode="HTML")
+        except Exception as e:
+            logging.error(f"Не удалось отправить заявку {recipient_id}: {e}")
 
     await message.answer(f"Спасибо, {name}! Заявка принята. 🙌", reply_markup=get_main_menu_keyboard())
     await state.clear()
@@ -242,49 +367,31 @@ async def cancel_form(message: Message, state: FSMContext):
     await message.answer("Действие отменено.", reply_markup=get_main_menu_keyboard())
 
 
-# === АДМИН-ПАНЕЛЬ: СТАТИСТИКА ===
-@dp.message(Command("stats"))
-async def cmd_stats(message: Message):
-    if message.from_user.id != ADMIN_ID: return
-    users, leads, today = await get_stats()
-    text = f"📊 <b>Статистика бота:</b>\n\n👥 Пользователей: {users}\n📝 Всего заявок: {leads}\n🔥 Заявок за сегодня: {today}"
-    await message.answer(text, parse_mode="HTML")
-
-
-# === АДМИН-ПАНЕЛЬ: РАССЫЛКА ===
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID: return
-    await state.set_state(Form.waiting_broadcast)
-    await message.answer("📢 Отправьте сообщение для рассылки (можно с фото):")
-
+# === РАССЫЛКА (ОБРАБОТКА ТЕКСТА) ===
 @dp.message(Form.waiting_broadcast)
 async def process_broadcast(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
-    
     users = await get_all_user_ids()
     if not users:
         await message.answer("Нет пользователей для рассылки.")
         await state.clear()
         return
 
-    success = 0
-    fail = 0
+    success, fail = 0, 0
     status_msg = await message.answer(f"⏳ Начинаю рассылку для {len(users)} чел...")
-    
     for user_id in users:
         try:
-            await message.copy_to(chat_id=user_id) # Копирует сообщение как есть
+            await message.copy_to(chat_id=user_id)
             success += 1
         except Exception:
             fail += 1
-        await asyncio.sleep(0.05) # Защита от блокировки Telegram (лимит 30 сообщений в секунду)
+        await asyncio.sleep(0.05)
 
-    await status_msg.edit_text(f"✅ Рассылка завершена!\n\nДоставлено: {success}\nНе доставлено (заблокировали): {fail}")
+    await status_msg.edit_text(f"✅ Рассылка завершена!\n\nДоставлено: {success}\nНе доставлено: {fail}")
     await state.clear()
 
 
-# === АДМИН-ПАНЕЛЬ: LEADS & EXPORT ===
+# === ТЕКСТОВЫЕ КОМАНДЫ АДМИНА (ОСТАВЛЯЕМ ДЛЯ УДОБСТВА) ===
 @dp.message(Command("leads"))
 async def show_leads(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -332,8 +439,6 @@ async def main():
         BotCommand(command="start", description="🏠 Главное меню"),
         BotCommand(command="leads", description="📊 Последние заявки (Админ)"),
         BotCommand(command="export", description="📥 Выгрузить в Excel (Админ)"),
-        BotCommand(command="stats", description="📈 Статистика (Админ)"),
-        BotCommand(command="broadcast", description="📢 Сделать рассылку (Админ)"),
     ])
     
     print("База данных готова.")
