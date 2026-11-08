@@ -19,15 +19,16 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 
+# 1. Загружаем настройки из .env
 load_dotenv()
-
-# === НАСТРОЙКИ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-SPAM_DELAY = 60
+MANAGER_USERNAME = os.getenv("MANAGER_USERNAME")
+WEBAPP_URL = os.getenv("WEBAPP_URL")
+
+# Константы
 DB_NAME = "leads.db"
-MANAGER_USERNAME = "gabitov19" 
-WEBAPP_URL = "https://gabitov19.github.io/telegram-lead-bot/webapp/" # Если меняли, верните свою ссылку
+SPAM_DELAY = 60  # Секунд между заявками
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -35,31 +36,33 @@ dp = Dispatcher(storage=MemoryStorage())
 
 last_request_time: dict[int, float] = {}
 
+# 2. СОСТОЯНИЯ (FSM)
+class Form(StatesGroup):
+    waiting_name = State()
+    waiting_phone = State()
+    waiting_feedback = State()
+    waiting_broadcast = State()
+    waiting_manager_id = State()
 
-# === БАЗА ДАННЫХ ===
+# ==========================================
+# 3. БАЗА ДАННЫХ (SQLite)
+# ==========================================
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
-        # Создаем таблицу, если её нет (для новых колонок)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS leads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                user_id INTEGER, 
-                name TEXT, 
-                contact TEXT, 
-                username TEXT, 
-                service TEXT,
-                appointment_date TEXT,
-                appointment_time TEXT,
-                created_at TEXT
+                user_id INTEGER, name TEXT, contact TEXT, username TEXT, 
+                service TEXT, appointment_date TEXT, appointment_time TEXT, created_at TEXT
             )
         """)
-        # Миграция для тех, у кого база создалась раньше (добавляем новые колонки)
+        # Миграция для старых баз
         try:
             await db.execute("ALTER TABLE leads ADD COLUMN service TEXT")
             await db.execute("ALTER TABLE leads ADD COLUMN appointment_date TEXT")
             await db.execute("ALTER TABLE leads ADD COLUMN appointment_time TEXT")
         except Exception:
-            pass # Колонки уже существуют, игнорируем ошибку
+            pass 
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -80,7 +83,6 @@ async def save_user(user_id: int, username: str, first_name: str):
         await db.commit()
 
 async def save_lead(user_id: int, name: str, contact: str, username: str, service: str = "—", app_date: str = "—", app_time: str = "—"):
-    # Фиксируем локальное время создания заявки
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
@@ -133,16 +135,9 @@ async def get_managers() -> list[int]:
             return [row[0] for row in await cursor.fetchall()]
 
 
-# === СОСТОЯНИЯ ===
-class Form(StatesGroup):
-    waiting_name = State()
-    waiting_phone = State()
-    waiting_feedback = State()
-    waiting_broadcast = State()
-    waiting_manager_id = State()
-
-
-# === КЛАВИАТУРЫ ===
+# ==========================================
+# 4. КЛАВИАТУРЫ
+# ==========================================
 def get_phone_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📱 Отправить телефон", request_contact=True)], [KeyboardButton(text="❌ Отмена")]],
@@ -152,7 +147,7 @@ def get_phone_keyboard():
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🚀 Оставить заявку", web_app=WebAppInfo(url=WEBAPP_URL))],
+            [KeyboardButton(text="🚀 Записаться онлайн", web_app=WebAppInfo(url=WEBAPP_URL))],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True, is_persistent=True
@@ -170,21 +165,23 @@ def get_inline_menu(user_id: int):
 
 def get_admin_panel():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Управление менеджерами", callback_data="manage_managers")],
+        [InlineKeyboardButton(text="👥 Управление командой", callback_data="manage_managers")],
         [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_main")]
     ])
 
 def get_managers_menu(managers: list):
-    keyboard = [[InlineKeyboardButton(text="➕ Добавить менеджера", callback_data="add_mgr")]]
+    keyboard = [[InlineKeyboardButton(text="➕ Добавить сотрудника", callback_data="add_mgr")]]
     for mgr in managers:
         keyboard.append([InlineKeyboardButton(text=f"❌ Удалить ID: {mgr}", callback_data=f"del_mgr:{mgr}")])
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin_panel")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# === СТАРТ ===
+# ==========================================
+# 5. ОБРАБОТЧИКИ КЛИЕНТСКОЙ ЧАСТИ
+# ==========================================
 @dp.message(Command("start"))
 @dp.message(F.text == "🏠 Главное меню")
 async def cmd_start(message: Message, state: FSMContext):
@@ -192,18 +189,58 @@ async def cmd_start(message: Message, state: FSMContext):
     await save_user(message.from_user.id, message.from_user.username or "", message.from_user.first_name)
     
     await message.answer(
-        f"Привет, {message.from_user.first_name}! 👋\nЯ — демо-бот.",
+        f"Привет, {message.from_user.first_name}! 👋\n"
+        "Добро пожаловать в наш сервис. Вы можете записаться на услугу через удобное приложение или связаться с нами.",
         reply_markup=get_main_menu_keyboard()
     )
-    await message.answer("Выберите действие:", reply_markup=get_inline_menu(message.from_user.id))
+    await message.answer("Выберите действие в меню ниже:", reply_markup=get_inline_menu(message.from_user.id))
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
     await callback.message.edit_text("Выберите действие:", reply_markup=get_inline_menu(callback.from_user.id))
     await callback.answer()
 
+@dp.callback_query(F.data == "price")
+async def show_price(callback: CallbackQuery):
+    await callback.message.answer("💰 <b>Наши услуги:</b>\n\n• Консультация — 1000 ₽\n• Разработка бота — от 15000 ₽\n• Поддержка — 5000 ₽/мес", parse_mode="HTML")
+    await callback.answer()
 
-# === ОБРАБОТКА WEB APP ===
+@dp.callback_query(F.data == "faq")
+async def show_faq(callback: CallbackQuery):
+    await callback.message.answer("❓ <b>Часто задаваемые вопросы:</b>\n\n<b>Как записаться?</b>\nНажмите кнопку «Записаться онлайн» внизу экрана.\n\n<b>Как с вами связаться?</b>\nНажмите кнопку «Менеджер».", parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "contact")
+async def show_contact(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")]])
+    await callback.message.answer("💬 Нажмите на кнопку ниже, чтобы перейти в чат с нашим специалистом.", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(F.data == "feedback")
+async def start_feedback(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(Form.waiting_feedback)
+    await callback.message.answer("📝 Пожалуйста, напишите ваш отзыв или пожелание одним сообщением:")
+    await callback.answer()
+
+@dp.message(Form.waiting_feedback, F.text)
+async def process_feedback(message: Message, state: FSMContext):
+    text = f"📩 <b>Новый отзыв!</b>\n\nОт: @{message.from_user.username or 'нет'}\n\n<i>{message.text}</i>"
+    try: 
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+    except Exception: 
+        pass
+    await message.answer("Спасибо за ваш отзыв! Мы обязательно его учтем. 🙌", reply_markup=get_main_menu_keyboard())
+    await state.clear()
+
+@dp.message(F.text == "❌ Отмена")
+async def cancel_form(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Действие отменено. Вы вернулись в главное меню.", reply_markup=get_main_menu_keyboard())
+
+
+# ==========================================
+# 6. ОБРАБОТКА WEB APP (MINI APP)
+# ==========================================
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
     try:
@@ -215,10 +252,8 @@ async def handle_webapp_data(message: Message):
         time = data.get("time", "Не указано")
         username = message.from_user.username or "нет"
         
-        # Сохраняем с новыми полями
         await save_lead(message.from_user.id, name, contact, username, service, date, time)
         
-        # Красиво форматируем уведомление
         lead_text = (
             f"🔔 <b>Новая запись!</b>\n\n"
             f"👤 Имя: {name}\n"
@@ -238,24 +273,26 @@ async def handle_webapp_data(message: Message):
             except Exception:
                 pass
                 
-        await message.answer(f"Спасибо, {name}! Вы записаны на {date} в {time}. 🙌", reply_markup=get_main_menu_keyboard())
+        await message.answer(f"Спасибо, {name}! Вы успешно записаны на {date} в {time}. 🙌", reply_markup=get_main_menu_keyboard())
     except Exception as e:
         logging.error(f"Ошибка Web App: {e}")
-        await message.answer("Произошла ошибка при обработке данных.")
+        await message.answer("Произошла ошибка при обработке данных. Попробуйте еще раз.")
 
 
-# === АДМИН-ПАНЕЛЬ ===
+# ==========================================
+# 7. АДМИН-ПАНЕЛЬ
+# ==========================================
 @dp.callback_query(F.data == "admin_panel")
 async def show_admin_panel(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("👑 <b>Админ-панель</b>\nВыберите раздел:", reply_markup=get_admin_panel(), parse_mode="HTML")
+    await callback.message.edit_text("👑 <b>Админ-панель</b>\nВыберите раздел для управления:", reply_markup=get_admin_panel(), parse_mode="HTML")
     await callback.answer()
 
 @dp.callback_query(F.data == "admin_stats")
 async def btn_stats(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     users, leads, today = await get_stats()
-    text = f"📊 <b>Статистика бота:</b>\n\n👥 Пользователей: {users}\n📝 Всего заявок: {leads}\n🔥 Заявок за сегодня: {today}"
+    text = f"📊 <b>Статистика:</b>\n\n👥 Пользователей: {users}\n📝 Всего заявок: {leads}\n🔥 Заявок за сегодня: {today}"
     try:
         await callback.message.edit_text(text, reply_markup=get_admin_panel(), parse_mode="HTML")
     except Exception:
@@ -266,15 +303,37 @@ async def btn_stats(callback: CallbackQuery):
 async def btn_broadcast(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID: return
     await state.set_state(Form.waiting_broadcast)
-    await callback.message.answer("📢 Отправьте сообщение для рассылки (можно с фото):")
+    await callback.message.answer("📢 Отправьте сообщение (текст или фото), которое нужно разослать всем пользователям:")
     await callback.answer()
 
+@dp.message(Form.waiting_broadcast)
+async def process_broadcast(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
+    users = await get_all_user_ids()
+    if not users:
+        await message.answer("В базе пока нет пользователей.")
+        await state.clear()
+        return
+    success, fail = 0, 0
+    status_msg = await message.answer(f"⏳ Рассылка начата для {len(users)} чел...")
+    for user_id in users:
+        try:
+            await message.copy_to(chat_id=user_id)
+            success += 1
+        except Exception:
+            fail += 1
+        await asyncio.sleep(0.05)
+    await status_msg.edit_text(f"✅ Рассылка завершена!\n\nДоставлено: {success}\nНе доставлено: {fail}")
+    await state.clear()
+
+
+# --- Управление менеджерами ---
 @dp.callback_query(F.data == "manage_managers")
 async def btn_manage_managers(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     managers = await get_managers()
-    text = "👥 <b>Управление менеджерами</b>\n\n"
-    text += "Текущие менеджеры (нажмите ❌, чтобы удалить):" if managers else "В команде пока нет менеджеров."
+    text = "👥 <b>Управление командой</b>\n\n"
+    text += "Нажмите ❌, чтобы удалить сотрудника из рассылки заявок:" if managers else "В команде пока нет менеджеров."
     await callback.message.edit_text(text, reply_markup=get_managers_menu(managers), parse_mode="HTML")
     await callback.answer()
 
@@ -282,7 +341,7 @@ async def btn_manage_managers(callback: CallbackQuery):
 async def btn_add_mgr(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID: return
     await state.set_state(Form.waiting_manager_id)
-    await callback.message.edit_text("Отправьте <b>ID</b> пользователя для назначения менеджером.", parse_mode="HTML")
+    await callback.message.edit_text("Отправьте <b>ID</b> пользователя, которого хотите добавить в команду.\n\n<i>(Узнать ID можно через @userinfobot)</i>", parse_mode="HTML")
     await callback.answer()
 
 @dp.message(Form.waiting_manager_id, F.text)
@@ -291,12 +350,12 @@ async def process_add_manager(message: Message, state: FSMContext):
     try:
         new_id = int(message.text.strip())
         await add_manager(new_id)
-        await message.answer(f"✅ Менеджер <code>{new_id}</code> добавлен.", parse_mode="HTML")
+        await message.answer(f"✅ Сотрудник с ID <code>{new_id}</code> добавлен.", parse_mode="HTML")
         await state.clear()
         managers = await get_managers()
-        await message.answer("👥 <b>Управление менеджерами</b>", reply_markup=get_managers_menu(managers), parse_mode="HTML")
+        await message.answer("👥 <b>Управление командой</b>", reply_markup=get_managers_menu(managers), parse_mode="HTML")
     except ValueError:
-        await message.answer("❌ ID должен состоять только из цифр.")
+        await message.answer("❌ Ошибка: ID должен состоять только из цифр.")
 
 @dp.callback_query(F.data.startswith("del_mgr:"))
 async def btn_del_mgr(callback: CallbackQuery):
@@ -304,133 +363,20 @@ async def btn_del_mgr(callback: CallbackQuery):
     mgr_id = int(callback.data.split(":")[1])
     await remove_manager(mgr_id)
     managers = await get_managers()
-    await callback.message.edit_text(f"✅ Менеджер <code>{mgr_id}</code> удален.\n\n👥 <b>Управление менеджерами</b>", reply_markup=get_managers_menu(managers), parse_mode="HTML")
+    await callback.message.edit_text(f"✅ Сотрудник <code>{mgr_id}</code> удален из команды.\n\n👥 <b>Управление командой</b>", reply_markup=get_managers_menu(managers), parse_mode="HTML")
     await callback.answer("Удалено")
 
 
-# === FAQ И МЕНЕДЖЕР ===
-@dp.callback_query(F.data == "faq")
-async def show_faq(callback: CallbackQuery):
-    await callback.message.answer("❓ <b>FAQ:</b>\n\n<b>Вопрос 1:</b> Как это работает?\n<i>Оставляете заявку, мы связываемся.</i>", parse_mode="HTML")
-    await callback.answer()
-
-@dp.callback_query(F.data == "contact")
-async def show_contact(callback: CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")]])
-    await callback.message.answer("💬 <b>Связь с менеджером</b>", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-
-# === ОБРАТНАЯ СВЯЗЬ ===
-@dp.callback_query(F.data == "feedback")
-async def start_feedback(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(Form.waiting_feedback)
-    await callback.message.answer("📝 Напишите ваш отзыв:")
-    await callback.answer()
-
-@dp.message(Form.waiting_feedback, F.text)
-async def process_feedback(message: Message, state: FSMContext):
-    text = f"📩 <b>Новый отзыв!</b>\n\nОт: @{message.from_user.username or 'нет'}\n\n<i>{message.text}</i>"
-    try: await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
-    except Exception: pass
-    await message.answer("Спасибо! 🙌", reply_markup=get_main_menu_keyboard())
-    await state.clear()
-
-
-# === ПРАЙС ===
-@dp.callback_query(F.data == "price")
-async def show_price(callback: CallbackQuery):
-    await callback.message.answer("💰 Услуги:\n• Консультация — 1000 ₽\n• Разработка бота — от 15000 ₽")
-    await callback.answer()
-
-
-# === СТАРАЯ ЗАЯВКА (ТЕКСТОМ) ===
-@dp.callback_query(F.data == "request")
-async def request_start(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    now = time.monotonic()
-    if now - last_request_time.get(user_id, 0) < SPAM_DELAY:
-        await callback.answer("Слишком часто. Подождите.", show_alert=True)
-        return
-    last_request_time[user_id] = now
-    await state.set_state(Form.waiting_name)
-    await callback.message.answer("Отлично! Как вас зовут?")
-    await callback.answer()
-
-@dp.message(Form.waiting_name, F.text)
-async def process_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    if len(name) < 2:
-        await message.answer("Имя слишком короткое. Напишите ещё раз.")
-        return
-    await state.update_data(name=name)
-    await state.set_state(Form.waiting_phone)
-    await message.answer(f"Приятно познакомиться, {name}! 👋\nНажмите кнопку ниже.", reply_markup=get_phone_keyboard())
-
-@dp.message(Form.waiting_phone, F.contact | F.text)
-async def process_phone(message: Message, state: FSMContext):
-    contact = message.contact.phone_number if message.contact else message.text.strip()
-    if len(contact) < 5:
-        await message.answer("Напишите телефон или @username.")
-        return
-    data = await state.get_data()
-    name = data.get("name", "—")
-    username = message.from_user.username or "нет"
-    
-    # Передаем пустые значения для новых полей, так как это старая форма
-    await save_lead(message.from_user.id, name, contact, username)
-    
-    lead_text = f"🔔 <b>Новая заявка!</b>\n\n👤 Имя: {name}\n📞 Контакт: {contact}\n💬 Telegram: @{username}"
-    managers = await get_managers()
-    recipients = set(managers)
-    recipients.add(ADMIN_ID)
-
-    for recipient_id in recipients:
-        try: await bot.send_message(recipient_id, lead_text, parse_mode="HTML")
-        except Exception: pass
-
-    await message.answer(f"Спасибо, {name}! Заявка принята. 🙌", reply_markup=get_main_menu_keyboard())
-    await state.clear()
-
-@dp.message(F.text == "❌ Отмена")
-async def cancel_form(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Действие отменено.", reply_markup=get_main_menu_keyboard())
-
-
-# === РАССЫЛКА ===
-@dp.message(Form.waiting_broadcast)
-async def process_broadcast(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID: return
-    users = await get_all_user_ids()
-    if not users:
-        await message.answer("Нет пользователей.")
-        await state.clear()
-        return
-    success, fail = 0, 0
-    status_msg = await message.answer(f"⏳ Начинаю рассылку для {len(users)} чел...")
-    for user_id in users:
-        try:
-            await message.copy_to(chat_id=user_id)
-            success += 1
-        except Exception:
-            fail += 1
-        await asyncio.sleep(0.05)
-    await status_msg.edit_text(f"✅ Рассылка завершена!\nДоставлено: {success}\nНе доставлено: {fail}")
-    await state.clear()
-
-
-# === КОМАНДЫ LEADS И EXPORT ===
+# --- Команды админа ---
 @dp.message(Command("leads"))
 async def show_leads(message: Message):
     if message.from_user.id != ADMIN_ID: return
     leads = await get_last_leads(10)
     if not leads:
-        await message.answer("База пуста.")
+        await message.answer("База заявок пуста.")
         return
-    text = "📊 <b>Последние 10 заявок:</b>\n\n"
+    text = "📊 <b>Последние 10 записей:</b>\n\n"
     for i, lead in enumerate(leads, 1):
-        # Красиво выводим всё новые данные
         text += (
             f"{i}. 👤 <b>{lead['name']}</b>\n"
             f"📞 {lead['contact']}\n"
@@ -445,30 +391,37 @@ async def export_to_excel(message: Message):
     if message.from_user.id != ADMIN_ID: return
     leads = await get_all_leads_for_excel()
     if not leads:
-        await message.answer("В базе нет заявок.")
+        await message.answer("В базе нет заявок для выгрузки.")
         return
     wb = Workbook()
     ws = wb.active
     ws.append(["ID", "Имя", "Контакт", "Telegram", "Услуга", "Дата записи", "Время записи", "Время создания"])
-    for lead in leads: ws.append(list(lead))
-    for cell in ws[1]: cell.font = cell.font.copy(bold=True)
+    for lead in leads: 
+        ws.append(list(lead))
+    for cell in ws[1]: 
+        cell.font = cell.font.copy(bold=True)
     filename = "leads_export.xlsx"
     wb.save(filename)
-    await message.answer("📥 Формирую файл...")
+    await message.answer("📥 Формирую файл Excel...")
     document = FSInputFile(filename)
-    await message.answer_document(document, caption="📊 Все заявки в Excel!")
+    await message.answer_document(document, caption="📊 Все заявки в одном файле!")
     os.remove(filename)
 
 
-# === ЗАПУСК ===
+# ==========================================
+# 8. ЗАПУСК БОТА
+# ==========================================
 async def main():
     await init_db()
+    
+    # Устанавливаем меню команд в Telegram
     await bot.set_my_commands([
         BotCommand(command="start", description="🏠 Главное меню"),
-        BotCommand(command="leads", description="📊 Заявки (Админ)"),
-        BotCommand(command="export", description="📥 Excel (Админ)"),
+        BotCommand(command="leads", description="📊 Последние заявки (Админ)"),
+        BotCommand(command="export", description="📥 Выгрузить в Excel (Админ)"),
     ])
-    print("Бот запущен.")
+    
+    print("Бот успешно запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
