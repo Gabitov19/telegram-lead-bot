@@ -2,7 +2,7 @@ TEXTS = {
     "ru": {
         "start": "Привет, {name}! 👋\n\nЯ профессионально разрабатываю Telegram-ботов для бизнеса.\n\nМои боты умеют: принимать заявки, вести базу клиентов, делать рассылки и работать с Web App (Mini Apps).\n\nВыберите пункт в меню ниже, чтобы узнать цены или посмотреть моего бота в деле!",
         "choose_action": "Выберите действие в меню ниже:",
-        "btn_webapp": "🚀 Живое демо (Web App)",
+        "btn_webapp": "🚀 Заказать бота",
         "btn_main_menu": "🏠 Главное меню",
         "btn_price": "💰 Прайс-лист",
         "btn_faq": "❓ FAQ (Как заказать)",
@@ -11,6 +11,7 @@ TEXTS = {
         "btn_feedback": "📝 Оставить отзыв",
         "btn_admin": "👑 Админ-панель",
         "btn_game": "🎮 Играть в демо-игру",
+        "btn_demo": "👀 Посмотреть демо (Запись)",
         
         "demo_text": "☝️ Нажмите кнопку <b>«Живое демо»</b> внизу экрана. Это настоящий бот для записи клиентов, которого я сделал. Попробуйте заполнить форму, и вы увидите, как заявка приходит в админку!",
         "price_text": "💰 <b>Стоимость разработки:</b>\n\n• Базовый бот (заявки, меню) — от 10 000 ₽\n• Бот с Web App (Mini App) и базой данных — от 20 000 ₽\n• Настройка на сервере (работа 24/7) — 2 000 ₽\n\n<i>Точная цена зависит от ваших задач. Напишите мне для расчета!</i>",
@@ -53,7 +54,7 @@ TEXTS = {
     "en": {
         "start": "Hello, {name}! 👋\n\nI am a professional Telegram Bot Developer.\n\nI build bots that collect leads, store databases, send broadcasts, and use Web Apps (Mini Apps).\n\nChoose an option below to see my prices or test my live bot!",
         "choose_action": "Choose an action from the menu below:",
-        "btn_webapp": "🚀 Live Demo (Web App)",
+        "btn_webapp": "🚀 Order a Bot",
         "btn_main_menu": "🏠 Main Menu",
         "btn_price": "💰 Price List",
         "btn_faq": "❓ FAQ (How to order)",
@@ -62,6 +63,7 @@ TEXTS = {
         "btn_feedback": "📝 Leave Feedback",
         "btn_admin": "👑 Admin Panel",
         "btn_game": "🎮 Play Demo Game",
+        "btn_demo": "👀 View Demo (Booking)",
         
         "demo_text": "☝️ Click the <b>'Live Demo'</b> button at the bottom. This is a real appointment bot I built. Try submitting the form and see how the lead arrives!",
         "price_text": "💰 <b>Development Prices:</b>\n\n• Basic Bot (leads, menu) — from $100\n• Bot with Web App & Database — from $200\n• Server Setup (24/7) — $20\n\n<i>Exact price depends on your needs. Contact me for a quote!</i>",

@@ -29,6 +29,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MANAGER_USERNAME = os.getenv("MANAGER_USERNAME")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 GAME_URL = os.getenv("GAME_URL") # Ссылка на игру
+DEMO_URL = os.getenv("DEMO_URL")
 
 DB_NAME = "leads.db"
 SPAM_DELAY = 60
@@ -151,7 +152,8 @@ def get_main_menu_keyboard(lang: str):
 def get_inline_menu(lang: str, user_id: int):
     github_url = "https://github.com/Gabitov19/telegram-lead-bot" 
     keyboard = [
-        [InlineKeyboardButton(text=get_text(lang, "btn_game"), web_app=WebAppInfo(url=GAME_URL))], # Кнопка игры
+        [InlineKeyboardButton(text=get_text(lang, "btn_demo"), web_app=WebAppInfo(url=DEMO_URL))], # <--- ДОБАВЛЕНА КНОПКА ДЕМО
+        [InlineKeyboardButton(text=get_text(lang, "btn_game"), web_app=WebAppInfo(url=GAME_URL))],
         [InlineKeyboardButton(text=get_text(lang, "btn_portfolio"), url=github_url)],
         [InlineKeyboardButton(text=get_text(lang, "btn_price"), callback_data="price")],
         [InlineKeyboardButton(text=get_text(lang, "btn_faq"), callback_data="faq"), InlineKeyboardButton(text=get_text(lang, "btn_manager"), callback_data="contact")],
@@ -417,7 +419,15 @@ async def show_leads(message: Message):
         return
     text = "📊 <b>Последние 10 записей / Latest 10 leads:</b>\n\n"
     for i, lead in enumerate(leads, 1):
-        text += f"{i}. 👤 <b>{lead['name']}</b>\n📞 {lead['contact']}\n🛠 {lead['service']}\n📅 {lead['appointment_date']}\n🕒 {lead['created_at']}\n\n"
+        # ДОБАВЛЕНА СТРОЧКА С TELEGRAM
+        text += (
+            f"{i}. 👤 <b>{lead['name']}</b>\n"
+            f"📞 {lead['contact']}\n"
+            f"💬 @{lead['username']}\n" 
+            f"🛠 {lead['service']}\n"
+            f"📅 {lead['appointment_date']}\n"
+            f"🕒 {lead['created_at']}\n\n"
+        )
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("export"))
