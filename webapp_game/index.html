@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Space Clicker</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg: var(--tg-theme-bg-color, #0f0c29);
+            --text: var(--tg-theme-text-color, #ffffff);
+            --btn: linear-gradient(135deg, #ff00cc, #333399);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            background: linear-gradient(to bottom, #0f0c29, #302b63, #24243e);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .score-container {
+            text-align: center;
+            margin-bottom: 30px;
+            z-index: 10;
+        }
+
+        .score-title {
+            font-size: 16px;
+            opacity: 0.7;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+        }
+
+        .score {
+            font-size: 56px;
+            font-weight: 900;
+            background: -webkit-linear-gradient(#00c6ff, #0072ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(0, 198, 255, 0.3);
+            transition: transform 0.1s;
+        }
+
+        .coin-wrapper {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .coin {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #ffffff, #00c6ff 20%, #0072ff 80%);
+            box-shadow: 0 0 50px rgba(0, 198, 255, 0.6), inset 0 10px 20px rgba(255,255,255,0.5), inset 0 -10px 20px rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 80px;
+            cursor: pointer;
+            transition: transform 0.05s ease;
+        }
+
+        .coin:active {
+            transform: scale(0.92);
+        }
+
+        .floating-text {
+            position: absolute;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            pointer-events: none;
+            animation: floatUp 0.8s ease-out forwards;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-100px) scale(1.5); }
+        }
+
+        .btn-claim {
+            margin-top: 40px;
+            width: 80%;
+            max-width: 300px;
+            padding: 16px;
+            background: var(--btn);
+            color: #fff;
+            border: none;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 0, 204, 0.4);
+            transition: transform 0.1s;
+        }
+
+        .btn-claim:active {
+            transform: scale(0.95);
+        }
+
+        /* Звезды на фоне */
+        .stars {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, #eee, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 40px 70px, #fff, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 50px 160px, #ddd, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 90px 40px, #fff, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 130px 80px, #fff, rgba(0,0,0,0));
+            background-repeat: repeat;
+            background-size: 200px 200px;
+            animation: sparkle 5s infinite linear;
+        }
+
+        @keyframes sparkle {
+            from { transform: translateY(0); }
+            to { transform: translateY(-200px); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="stars"></div>
+
+    <div class="score-container">
+        <div class="score-title">Ваши монеты / Your Coins</div>
+        <div class="score" id="score">0</div>
+    </div>
+
+    <div class="coin-wrapper" id="coin-wrapper">
+        <div class="coin" id="coin" onclick="tap(event)">💰</div>
+    </div>
+
+    <button class="btn-claim" onclick="claim()">Забрать награду</button>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        let score = 0;
+        const scoreEl = document.getElementById('score');
+        const coinWrapper = document.getElementById('coin-wrapper');
+
+        function tap(event) {
+            score++;
+            scoreEl.innerText = score;
+            
+            // Анимация пульсации цифры
+            scoreEl.style.transform = "scale(1.1)";
+            setTimeout(() => scoreEl.style.transform = "scale(1)", 100);
+
+            // Вибрация (если поддерживается телефоном)
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.impactOccurred('light');
+            }
+
+            // Создаем всплывающий текст "+1"
+            const floatText = document.createElement('div');
+            floatText.className = 'floating-text';
+            floatText.innerText = '+1';
+            
+            // Позиционируем там, где был клик
+            const rect = coinWrapper.getBoundingClientRect();
+            const x = event.clientX || event.touches[0].clientX;
+            const y = event.clientY || event.touches[0].clientY;
+            
+            floatText.style.left = (x - rect.left - 10) + 'px';
+            floatText.style.top = (y - rect.top - 10) + 'px';
+            
+            coinWrapper.appendChild(floatText);
+
+            // Удаляем текст через 0.8 сек
+            setTimeout(() => floatText.remove(), 800);
+        }
+
+        function claim() {
+            if (score === 0) {
+                tg.showAlert("Сначала нажмите на монету!");
+                return;
+            }
+            // Отправляем данные боту
+            tg.sendData(JSON.stringify({ score: score }));
+            tg.close();
+        }
+    </script>
+</body>
+</html>
