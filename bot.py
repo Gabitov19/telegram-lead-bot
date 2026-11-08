@@ -243,23 +243,25 @@ async def cancel_form(message: Message, state: FSMContext):
 # ==========================================
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
+    lang = message.from_user.language_code or "ru"
     try:
         data = json.loads(message.web_app_data.data)
         name = data.get("name")
         contact = data.get("phone")
-        service = data.get("service", "Не указана")
-        date = data.get("date", "Не указана")
-        time = data.get("time", "Не указано")
+        bot_type = data.get("bot_type", "Не указан")
+        description = data.get("description", "Без описания")
         username = message.from_user.username or "нет"
         
-        await save_lead(message.from_user.id, name, contact, username, service, date, time)
+        # Сохраняем в БД
+        await save_lead(message.from_user.id, name, contact, username, service=bot_type, app_date="—", app_time="—")
         
+        # Формируем красивое уведомление для вас (Админа)
         lead_text = (
-            f"🔔 <b>Новая запись!</b>\n\n"
+            f"🔥 <b>Новая заявка на разработку!</b>\n\n"
             f"👤 Имя: {name}\n"
             f"📞 Контакт: {contact}\n"
-            f"🛠 Услуга: {service}\n"
-            f"📅 Дата: {date} в {time}\n"
+            f"🤖 Тип бота: {bot_type}\n"
+            f"📝 Описание: {description}\n"
             f"💬 Telegram: @{username}"
         )
         
@@ -268,15 +270,15 @@ async def handle_webapp_data(message: Message):
         recipients.add(ADMIN_ID)
         
         for recipient_id in recipients:
-            try:
+            try: 
                 await bot.send_message(recipient_id, lead_text, parse_mode="HTML")
-            except Exception:
+            except Exception: 
                 pass
                 
-        await message.answer(f"Спасибо, {name}! Вы успешно записаны на {date} в {time}. 🙌", reply_markup=get_main_menu_keyboard())
+        await message.answer(f"Спасибо, {name}! Ваша заявка на разработку принята. Я свяжусь с вами в ближайшее время. 🙌", reply_markup=get_main_menu_keyboard(lang))
     except Exception as e:
         logging.error(f"Ошибка Web App: {e}")
-        await message.answer("Произошла ошибка при обработке данных. Попробуйте еще раз.")
+        await message.answer(get_text(lang, "lead_error"))
 
 
 # ==========================================
