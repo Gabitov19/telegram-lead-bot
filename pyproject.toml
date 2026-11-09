@@ -3,7 +3,7 @@ name = "my-tg-bot"
 version = "0.1.0"
 description = "Telegram bot for lead generation"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.31.0",
     "aiosqlite>=0.22.1",
